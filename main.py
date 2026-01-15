@@ -4,7 +4,9 @@ import os
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
-# === SEKRETY GITHUB ACTIONS ===
+# =================================
+# Sekrety z GitHub
+# =================================
 API_TOKEN = os.getenv("API_TOKEN")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
@@ -14,7 +16,9 @@ if not API_TOKEN or not DISCORD_WEBHOOK or not ODDS_API_KEY:
 
 HEADERS = {"X-Auth-Token": API_TOKEN}
 
-# === LIGI I PUCHARY ===
+# =================================
+# Ligi i Puchary
+# =================================
 COMPETITIONS = [
     "PL", "PD", "SA", "BL1",  # ligi
     "CL", "EL", "EC"           # LM, LE, LK
@@ -22,7 +26,9 @@ COMPETITIONS = [
 
 CONF_THRESHOLD = 0.65
 
-# Pobranie wszystkich meczów (status FINISHED + SCHEDULED)
+# =================================
+# Pobranie meczów
+# =================================
 def get_matches():
     all_matches = []
     for comp in COMPETITIONS:
@@ -33,7 +39,9 @@ def get_matches():
             all_matches.extend(data['matches'])
     return all_matches
 
-# Budowa DataFrame z dodatkowymi cechami
+# =================================
+# Budowa DataFrame
+# =================================
 def build_df(matches):
     rows = []
     for m in matches:
@@ -52,7 +60,7 @@ def build_df(matches):
         })
     df = pd.DataFrame(rows)
 
-    # Forma drużyny i różnica bramek tylko dla zakończonych meczów
+    # Obliczenia formy i różnicy bramek
     finished_df = df[df['status'] == 'FINISHED'].copy()
     finished_df['home_form'] = finished_df.groupby('home')['home_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
     finished_df['away_form'] = finished_df.groupby('away')['away_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
@@ -60,32 +68,29 @@ def build_df(matches):
 
     return df, finished_df
 
+# =================================
 # Trening modelu
+# =================================
 def train_model(df, target_col):
-    # usuń wiersze, gdzie target jest None
     df = df[df[target_col].notnull()].copy()
-
-    # X = cechy
     X = df[['home_goals','away_goals','home_form','away_form','goal_diff']]
-    # y = 0/1
     y = df[target_col].astype(int)
-
-    # split na train/test (80/20)
-    split_index = int(len(df) * 0.8)
+    split_index = int(len(df)*0.8)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 
-    # Trening modelu
     model = RandomForestClassifier(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
 
-    # Dodaj kolumnę confidence do df
     df[f"{target_col}_conf"] = 0
     if len(X_test) > 0:
-        df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:, 1]
+        df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:,1]
 
     return df, model
+
+# =================================
 # Pobranie kursów bukmacherskich
+# =================================
 def get_odds():
     url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?regions=eu&markets=h2h,totals&apiKey={ODDS_API_KEY}"
     r = requests.get(url)
@@ -104,7 +109,9 @@ def get_odds():
             continue
     return pd.DataFrame(odds_list)
 
-# Filtr Value Bets
+# =================================
+# Filtr value bets
+# =================================
 def filter_value_bets(upcoming_df, model_df, odds_df, col):
     df = upcoming_df.copy()
     df = pd.merge(df, model_df[['home','away',f'{col}_conf']], on=['home','away'], how='left')
@@ -112,35 +119,34 @@ def filter_value_bets(upcoming_df, model_df, odds_df, col):
     value_bets = df[(df[f"{col}_conf"] >= CONF_THRESHOLD) & (df[f"{col}_conf"] > 1/df[col])]
     return value_bets
 
-# Wysyłka Discord
+# =================================
+# Wysyłka na Discord
+# =================================
 def send_discord(msg):
     requests.post(DISCORD_WEBHOOK, json={"content": msg})
 
+# =================================
 # Funkcja główna
+# =================================
 def run_agent():
-    matches = get_matches()                 # wszystkie mecze
-    df_all, finished_df = build_df(matches) # df_all = wszystkie mecze, finished_df = tylko FINISHED
-    odds_df = get_odds()                    # kursy bukmacherskie
-
+    matches = get_matches()
+    df_all, finished_df = build_df(matches)
+    odds_df = get_odds()
     today_str = datetime.now().strftime("%Y-%m-%d")
-    upcoming_df = df_all[df_all['status'] == 'SCHEDULED'].copy()  # tylko nadchodzące
+    upcoming_df = df_all[df_all['status'] == 'SCHEDULED'].copy()
 
     for comp in df_all['competition'].unique():
-        comp_finished = finished_df[finished_df['competition'] == comp].copy()
+        comp_finished = finished_df[finished_df['competition']==comp].copy()
         if len(comp_finished) < 5:
-            continue  # za mało danych do treningu
+            continue
 
-        for col in ["over25", "btts"]:
-            # Trening modelu tylko na zakończonych meczach
+        for col in ["over25","btts"]:
             comp_finished, model = train_model(comp_finished, col)
-
-            comp_upcoming = upcoming_df[upcoming_df['competition'] == comp].copy()
+            comp_upcoming = upcoming_df[upcoming_df['competition']==comp].copy()
             if comp_upcoming.empty:
                 continue
 
-            # Filtr value bets
             value_bets = filter_value_bets(comp_upcoming, comp_finished, odds_df, col)
-
             for _, row in value_bets.iterrows():
                 msg = (
                     f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
@@ -151,14 +157,6 @@ def run_agent():
                 )
                 send_discord(msg)
 
-    # Raport dzienny
-    report = ""
-    for comp in df_all['competition'].unique():
-        for col in ["over25", "btts"]:
-            mean_conf = finished_df[finished_df['competition']==comp][f"{col}_conf"].mean()
-            report += f"{comp} – {col.upper()} – średnia pewność: {mean_conf:.2f}\n"
-    send_discord(f"📊 **Raport dzienny AI**\n{report}")
-    
     # Raport dzienny
     report = ""
     for comp in df_all['competition'].unique():
