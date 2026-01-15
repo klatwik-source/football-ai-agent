@@ -65,6 +65,5 @@ def run_agent():
 
 if __name__ == "__main__":
     run_agent()
-    Fix env variables for GitHub Actions
-
+    Fix syntax error
        
