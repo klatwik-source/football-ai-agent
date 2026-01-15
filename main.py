@@ -7,7 +7,7 @@ from datetime import datetime
 # === SEKRETY GITHUB ACTIONS ===
   API_TOKEN: ${{ secrets.API_TOKEN }}
   DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-  ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+
 
 
 if not API_TOKEN or not DISCORD_WEBHOOK or not ODDS_API_KEY:
