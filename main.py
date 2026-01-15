@@ -5,9 +5,11 @@ from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
 # === SEKRETY GITHUB ACTIONS ===
-API_TOKEN = os.getenv("API_TOKEN")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+env:
+  API_TOKEN: ${{ secrets.API_TOKEN }}
+  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+  ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+
 
 if not API_TOKEN or not DISCORD_WEBHOOK or not ODDS_API_KEY:
     raise Exception("Upewnij się, że API_TOKEN, DISCORD_WEBHOOK i ODDS_API_KEY są ustawione w GitHub Secrets")
