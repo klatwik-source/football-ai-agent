@@ -1,36 +1,42 @@
-name: Run Football AI Agent
+def run_agent():
+    matches = get_matches()
+    df_all, finished_df = build_df(matches)
+    odds_df = get_odds()
+    upcoming_df = df_all[df_all['status']=='SCHEDULED'].copy()
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
-# Automatyczne uruchamianie codziennie o 8:00 UTC
-on:
-  schedule:
-    - cron: '0 8 * * *'
-  workflow_dispatch:  # możliwość ręcznego uruchomienia
+    overall_report = f"📊 **Raport AI Agent - {today_str}**\n"
 
-jobs:
-  run-agent:
-    runs-on: ubuntu-latest
+    for comp in df_all['competition'].unique():
+        comp_finished = finished_df[finished_df['competition']==comp].copy()
+        if len(comp_finished) < 5:
+            continue
+        comp_upcoming = upcoming_df[upcoming_df['competition']==comp].copy()
+        if comp_upcoming.empty:
+            continue
 
-    steps:
-      # 1️⃣ Pobranie repozytorium
-      - name: Checkout repo
-        uses: actions/checkout@v3
+        overall_report += f"\n🏆 **{comp}**\n"
+        for col in ["over25","btts"]:
+            comp_finished, model = train_model(comp_finished, col)
+            if model is None:
+                overall_report += f"⚠️ Nie udało się wytrenować modelu dla {col}\n"
+                continue
 
-      # 2️⃣ Ustawienie Pythona 3.12
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.12
+            value_bets = filter_value_bets(comp_upcoming, comp_finished, odds_df, col)
 
-      # 3️⃣ Instalacja zależności
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas requests scikit-learn
+            if len(value_bets) == 0:
+                overall_report += f"❌ Brak pewnych typów dla {col}\n"
+            else:
+                for _, row in value_bets.iterrows():
+                    msg = (
+                        f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
+                        f"🎯 Typ: {col.upper()}\n"
+                        f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
+                        f"💰 Kurs: {row[col]}\n"
+                        f"🧠 AI Agent"
+                    )
+                    send_discord(msg)
+                overall_report += f"✅ Znaleziono {len(value_bets)} pewnych typów dla {col}\n"
 
-      # 4️⃣ Uruchomienie agenta
-      - name: Run AI Agent
-        env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python main.py
+    # Wyślij podsumowanie dnia niezależnie od typów
+    send_discord(overall_report)
