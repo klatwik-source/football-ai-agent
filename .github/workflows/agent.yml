@@ -2,7 +2,7 @@ name: Football AI Agent
 
 on:
   schedule:
-    - cron: "0 9 * * *"   # codziennie 09:00 UTC (11:00 PL)
+    - cron: "0 9 * * *"   # codziennie 09:00 UTC = 11:00 PL
   workflow_dispatch:
 
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
