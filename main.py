@@ -2,7 +2,6 @@ import requests
 import pandas as pd
 import os
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
 # === SEKRETY GITHUB ACTIONS ===
 API_TOKEN = os.getenv("API_TOKEN")
@@ -30,7 +29,7 @@ def get_matches():
             all_matches.extend(data['matches'])
     return all_matches
 
-# Budowa DataFrame
+# Budowa DataFrame z dodatkowymi cechami
 def build_df(matches):
     rows = []
     for m in matches:
@@ -49,14 +48,22 @@ def build_df(matches):
             "over35": (home_goals + away_goals) > 3.5
         })
     df = pd.DataFrame(rows)
+    
+    # Forma drużyny: średnia bramek w ostatnich 3 meczach
+    df['home_form'] = df.groupby('home')['home_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
+    df['away_form'] = df.groupby('away')['away_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
+    
+    # Różnica bramek
+    df['goal_diff'] = df['home_goals'] - df['away_goals']
+    
     return df
 
-# Trening AI z podziałem na train/test
+# Trening modelu z dodatkowymi cechami
 def train_model(df, target_col):
-    X = df[['home_goals', 'away_goals']]
+    X = df[['home_goals', 'away_goals', 'home_form', 'away_form', 'goal_diff']]
     y = df[target_col]
     
-    # Chronologiczny podział: ostatnie 20% jako test
+    # Chronologiczny podział na train/test
     split_index = int(len(df)*0.8)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
@@ -64,7 +71,7 @@ def train_model(df, target_col):
     model = RandomForestClassifier(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
     
-    # Liczymy confidence na “niewidzianych” meczach
+    # Liczymy confidence na niewidzianych meczach
     df[f"{target_col}_conf"] = pd.Series([0]*len(df), index=df.index)
     df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:, 1]
     
