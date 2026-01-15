@@ -56,6 +56,6 @@ def run_agent():
         send_discord(msg)
 
 if __name__ == "__main__":
-    while True:
+    
         run_agent()
         time.sleep(86400)
