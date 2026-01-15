@@ -62,19 +62,29 @@ def build_df(matches):
 
 # Trening modelu
 def train_model(df, target_col):
+    # usuń wiersze, gdzie target jest None
+    df = df[df[target_col].notnull()].copy()
+
+    # X = cechy
     X = df[['home_goals','away_goals','home_form','away_form','goal_diff']]
-    y = df[target_col]
-    split_index = int(len(df)*0.8)
+    # y = 0/1
+    y = df[target_col].astype(int)
+
+    # split na train/test (80/20)
+    split_index = int(len(df) * 0.8)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
-    
+
+    # Trening modelu
     model = RandomForestClassifier(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
-    
-    df[f"{target_col}_conf"] = pd.Series([0]*len(df), index=df.index)
-    df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:,1]
-    return df, model
 
+    # Dodaj kolumnę confidence do df
+    df[f"{target_col}_conf"] = 0
+    if len(X_test) > 0:
+        df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:, 1]
+
+    return df, model
 # Pobranie kursów bukmacherskich
 def get_odds():
     url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?regions=eu&markets=h2h,totals&apiKey={ODDS_API_KEY}"
@@ -108,25 +118,29 @@ def send_discord(msg):
 
 # Funkcja główna
 def run_agent():
-    matches = get_matches()
-    df_all, finished_df = build_df(matches)
-    odds_df = get_odds()
-    
+    matches = get_matches()                 # wszystkie mecze
+    df_all, finished_df = build_df(matches) # df_all = wszystkie mecze, finished_df = tylko FINISHED
+    odds_df = get_odds()                    # kursy bukmacherskie
+
     today_str = datetime.now().strftime("%Y-%m-%d")
-    upcoming_df = df_all[df_all['status'] == 'SCHEDULED'].copy()
-    
+    upcoming_df = df_all[df_all['status'] == 'SCHEDULED'].copy()  # tylko nadchodzące
+
     for comp in df_all['competition'].unique():
-        comp_finished = finished_df[finished_df['competition']==comp].copy()
-        if len(comp_finished) < 5:  # mało danych -> pomijamy
-            continue
-        
-        for col in ["over25","btts"]:
+        comp_finished = finished_df[finished_df['competition'] == comp].copy()
+        if len(comp_finished) < 5:
+            continue  # za mało danych do treningu
+
+        for col in ["over25", "btts"]:
+            # Trening modelu tylko na zakończonych meczach
             comp_finished, model = train_model(comp_finished, col)
-            comp_upcoming = upcoming_df[upcoming_df['competition']==comp].copy()
+
+            comp_upcoming = upcoming_df[upcoming_df['competition'] == comp].copy()
             if comp_upcoming.empty:
                 continue
+
+            # Filtr value bets
             value_bets = filter_value_bets(comp_upcoming, comp_finished, odds_df, col)
-            
+
             for _, row in value_bets.iterrows():
                 msg = (
                     f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
@@ -136,6 +150,14 @@ def run_agent():
                     f"🧠 AI Agent"
                 )
                 send_discord(msg)
+
+    # Raport dzienny
+    report = ""
+    for comp in df_all['competition'].unique():
+        for col in ["over25", "btts"]:
+            mean_conf = finished_df[finished_df['competition']==comp][f"{col}_conf"].mean()
+            report += f"{comp} – {col.upper()} – średnia pewność: {mean_conf:.2f}\n"
+    send_discord(f"📊 **Raport dzienny AI**\n{report}")
     
     # Raport dzienny
     report = ""
