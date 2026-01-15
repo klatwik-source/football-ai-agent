@@ -2,11 +2,11 @@ import requests
 import pandas as pd
 import os
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
-# === SEKRETY Z GITHUB ACTIONS ===
+# === SEKRETY GITHUB ACTIONS ===
 API_TOKEN = os.getenv("API_TOKEN")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-BOOKMAKER_API = os.getenv("BOOKMAKER_API")  # np. darmowe kursy API
 
 if not API_TOKEN:
     raise Exception("BRAK API_TOKEN – sprawdź secrets w repo")
@@ -15,9 +15,8 @@ if not DISCORD_WEBHOOK:
 
 HEADERS = {"X-Auth-Token": API_TOKEN}
 
-# === LIGI DO ANALIZY ===
+# === LIGI ===
 LEAGUES = ["PL", "PD", "SA", "BL1"]
-
 CONF_THRESHOLD = 0.65  # tylko pewne typy
 
 # Pobranie meczów
@@ -52,29 +51,26 @@ def build_df(matches):
     df = pd.DataFrame(rows)
     return df
 
-# Trening AI
+# Trening AI z podziałem na train/test
 def train_model(df, target_col):
     X = df[['home_goals', 'away_goals']]
     y = df[target_col]
+    
+    # Chronologiczny podział: ostatnie 20% jako test
+    split_index = int(len(df)*0.8)
+    X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
+    y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
+    
     model = RandomForestClassifier(n_estimators=200, random_state=42)
-    model.fit(X, y)
-    df[f"{target_col}_conf"] = model.predict_proba(X)[:, 1]
+    model.fit(X_train, y_train)
+    
+    # Liczymy confidence na “niewidzianych” meczach
+    df[f"{target_col}_conf"] = pd.Series([0]*len(df), index=df.index)
+    df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:, 1]
+    
     return df
 
-# Pobranie kursów bukmacherskich (przykład darmowy)
-def get_odds():
-    # Tutaj API lub plik CSV z kursami
-    # Format: home, away, over25, over35, btts
-    return pd.DataFrame(columns=["home","away","over25","over35","btts"])
-
-# Obliczenie value betting
-def filter_value_bets(df, odds_df, col):
-    merged = pd.merge(df, odds_df, on=["home","away"], how="left", suffixes=("","_odds"))
-    high_conf = merged[(merged[f"{col}_conf"] >= CONF_THRESHOLD) &
-                       (merged[f"{col}_conf"] > 1/merged[f"{col}_odds"])]
-    return high_conf
-
-# Wysyłka Discord
+# Wysyłka na Discord
 def send_discord(msg):
     requests.post(DISCORD_WEBHOOK, json={"content": msg})
 
@@ -82,23 +78,20 @@ def send_discord(msg):
 def run_agent():
     matches = get_matches()
     df = build_df(matches)
-    odds_df = get_odds()
 
     for col in ["over25", "over35", "btts"]:
         df = train_model(df, col)
-        value_bets = filter_value_bets(df, odds_df, col)
-
-        for _, row in value_bets.iterrows():
+        high_conf = df[df[f"{col}_conf"] >= CONF_THRESHOLD]
+        for _, row in high_conf.iterrows():
             type_name = col.upper()
             msg = (
                 f"⚽ **{row.league}: {row.home} vs {row.away}**\n"
                 f"🎯 Typ: {type_name}\n"
                 f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
-                f"💰 Kurs: {row[f'{col}_odds']}\n"
                 f"🧠 AI Agent"
             )
             send_discord(msg)
-
+    
     # Raport skuteczności
     report = ""
     for col in ["over25","over35","btts"]:
