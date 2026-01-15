@@ -149,28 +149,41 @@ def run_agent():
     upcoming_df = df_all[df_all['status']=='SCHEDULED'].copy()
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    overall_report = f"📊 **Raport AI Agent - {today_str}**\n"
+
     for comp in df_all['competition'].unique():
         comp_finished = finished_df[finished_df['competition']==comp].copy()
-        if len(comp_finished)<5:
+        if len(comp_finished) < 5:
             continue
         comp_upcoming = upcoming_df[upcoming_df['competition']==comp].copy()
         if comp_upcoming.empty:
             continue
 
+        overall_report += f"\n🏆 **{comp}**\n"
         for col in ["over25","btts"]:
             comp_finished, model = train_model(comp_finished, col)
             if model is None:
+                overall_report += f"⚠️ Nie udało się wytrenować modelu dla {col}\n"
                 continue
+
             value_bets = filter_value_bets(comp_upcoming, comp_finished, odds_df, col)
-            for _, row in value_bets.iterrows():
-                msg = (
-                    f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
-                    f"🎯 Typ: {col.upper()}\n"
-                    f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
-                    f"💰 Kurs: {row[col]}\n"
-                    f"🧠 AI Agent"
-                )
-                send_discord(msg)
+
+            if len(value_bets) == 0:
+                overall_report += f"❌ Brak pewnych typów dla {col}\n"
+            else:
+                for _, row in value_bets.iterrows():
+                    msg = (
+                        f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
+                        f"🎯 Typ: {col.upper()}\n"
+                        f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
+                        f"💰 Kurs: {row[col]}\n"
+                        f"🧠 AI Agent"
+                    )
+                    send_discord(msg)
+                overall_report += f"✅ Znaleziono {len(value_bets)} pewnych typów dla {col}\n"
+
+    # Wyślij podsumowanie dnia niezależnie od typów
+    send_discord(overall_report)
 
 if __name__ == "__main__":
     run_agent()
