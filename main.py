@@ -5,7 +5,6 @@ from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
 # === SEKRETY GITHUB ACTIONS ===
-env:
   API_TOKEN: ${{ secrets.API_TOKEN }}
   DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
   ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
