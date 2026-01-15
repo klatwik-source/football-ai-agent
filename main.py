@@ -5,9 +5,8 @@ from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
 # === SEKRETY GITHUB ACTIONS ===
-  API_TOKEN: ${{ secrets.API_TOKEN }}
-  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-
+API_TOKEN = os.getenv("API_TOKEN")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 
 if not API_TOKEN or not DISCORD_WEBHOOK or not ODDS_API_KEY:
