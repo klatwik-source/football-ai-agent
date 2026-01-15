@@ -6,6 +6,7 @@ from sklearn.ensemble import RandomForestClassifier
 # === SEKRETY Z GITHUB ACTIONS ===
 API_TOKEN = os.getenv("API_TOKEN")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+BOOKMAKER_API = os.getenv("BOOKMAKER_API")  # np. darmowe kursy API
 
 if not API_TOKEN:
     raise Exception("BRAK API_TOKEN – sprawdź secrets w repo")
@@ -15,11 +16,11 @@ if not DISCORD_WEBHOOK:
 HEADERS = {"X-Auth-Token": API_TOKEN}
 
 # === LIGI DO ANALIZY ===
-LEAGUES = ["PL", "PD", "SA", "BL1"]  # Premier, LaLiga, SerieA, Bundesliga
+LEAGUES = ["PL", "PD", "SA", "BL1"]
 
 CONF_THRESHOLD = 0.65  # tylko pewne typy
 
-# Pobranie meczów z każdej ligi
+# Pobranie meczów
 def get_matches():
     all_matches = []
     for league in LEAGUES:
@@ -51,7 +52,7 @@ def build_df(matches):
     df = pd.DataFrame(rows)
     return df
 
-# Trening modelu AI i liczenie confidence
+# Trening AI
 def train_model(df, target_col):
     X = df[['home_goals', 'away_goals']]
     y = df[target_col]
@@ -60,7 +61,20 @@ def train_model(df, target_col):
     df[f"{target_col}_conf"] = model.predict_proba(X)[:, 1]
     return df
 
-# Wysyłka na Discord
+# Pobranie kursów bukmacherskich (przykład darmowy)
+def get_odds():
+    # Tutaj API lub plik CSV z kursami
+    # Format: home, away, over25, over35, btts
+    return pd.DataFrame(columns=["home","away","over25","over35","btts"])
+
+# Obliczenie value betting
+def filter_value_bets(df, odds_df, col):
+    merged = pd.merge(df, odds_df, on=["home","away"], how="left", suffixes=("","_odds"))
+    high_conf = merged[(merged[f"{col}_conf"] >= CONF_THRESHOLD) &
+                       (merged[f"{col}_conf"] > 1/merged[f"{col}_odds"])]
+    return high_conf
+
+# Wysyłka Discord
 def send_discord(msg):
     requests.post(DISCORD_WEBHOOK, json={"content": msg})
 
@@ -68,23 +82,28 @@ def send_discord(msg):
 def run_agent():
     matches = get_matches()
     df = build_df(matches)
+    odds_df = get_odds()
 
     for col in ["over25", "over35", "btts"]:
         df = train_model(df, col)
+        value_bets = filter_value_bets(df, odds_df, col)
 
-    # Wysyłamy tylko pewne typy
-    for col in ["over25", "over35", "btts"]:
-        high_conf = df[df[f"{col}_conf"] >= CONF_THRESHOLD]
-        for _, row in high_conf.iterrows():
+        for _, row in value_bets.iterrows():
             type_name = col.upper()
             msg = (
                 f"⚽ **{row.league}: {row.home} vs {row.away}**\n"
                 f"🎯 Typ: {type_name}\n"
-                f"📊 Pewność: {round(row[f'{col}_conf']*100,2)}%\n"
+                f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
+                f"💰 Kurs: {row[f'{col}_odds']}\n"
                 f"🧠 AI Agent"
             )
             send_discord(msg)
 
-# Start
+    # Raport skuteczności
+    report = ""
+    for col in ["over25","over35","btts"]:
+        report += f"{col.upper()} – średnia pewność: {df[f'{col}_conf'].mean():.2f}\n"
+    send_discord(f"📊 **Raport dzienny AI**\n{report}")
+
 if __name__ == "__main__":
     run_agent()
