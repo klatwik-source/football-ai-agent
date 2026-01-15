@@ -1,12 +1,20 @@
 import requests
 import pandas as pd
 import time
+import os
 from sklearn.ensemble import RandomForestClassifier
 
-API_TOKEN = ""
-DISCORD_WEBHOOK = ""
+API_TOKEN = os.getenv("API_TOKEN")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+
+if not API_TOKEN:
+    raise Exception("BRAK API_TOKEN")
+
+if not DISCORD_WEBHOOK:
+    raise Exception("BRAK DISCORD_WEBHOOK")
 
 HEADERS = {"X-Auth-Token": API_TOKEN}
+
 
 def get_matches():
     url = "https://api.football-data.org/v4/competitions/PL/matches?status=FINISHED"
@@ -57,4 +65,6 @@ def run_agent():
 
 if __name__ == "__main__":
     run_agent()
+    Fix env variables for GitHub Actions
+
        
