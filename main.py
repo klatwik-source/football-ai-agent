@@ -122,8 +122,8 @@ def filter_value_bets(upcoming_df, model_df, odds_df, col):
     # Dodaj kursy z bukmacherki
     df = pd.merge(df, odds_df[['home','away',col]], on=['home','away'], how='left')
 
-    # Usuń wiersze bez kursu ani confidence
-    df = df[df[col].notnull() & df[f'{col}_conf'].notnull()]
+    # Usuń wiersze bez kursu lub confidence
+    df = df[df[f'{col}_conf'].notnull() & df[col].notnull()]
 
     # Filtr value bets
     value_bets = df[(df[f"{col}_conf"] >= CONF_THRESHOLD) & (df[f"{col}_conf"] > 1/df[col])]
