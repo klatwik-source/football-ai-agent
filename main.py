@@ -60,7 +60,7 @@ def build_df(matches):
         })
     df = pd.DataFrame(rows)
 
-    # Obliczenia formy i różnicy bramek
+    # Obliczenia formy i różnicy bramek dla zakończonych meczów
     finished_df = df[df['status'] == 'FINISHED'].copy()
     finished_df['home_form'] = finished_df.groupby('home')['home_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
     finished_df['away_form'] = finished_df.groupby('away')['away_goals'].transform(lambda x: x.rolling(3, min_periods=1).mean())
@@ -75,6 +75,7 @@ def train_model(df, target_col):
     df = df[df[target_col].notnull()].copy()
     X = df[['home_goals','away_goals','home_form','away_form','goal_diff']]
     y = df[target_col].astype(int)
+
     split_index = int(len(df)*0.8)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
@@ -82,7 +83,8 @@ def train_model(df, target_col):
     model = RandomForestClassifier(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
 
-    df[f"{target_col}_conf"] = 0
+    # kolumna float na confidence
+    df[f"{target_col}_conf"] = 0.0
     if len(X_test) > 0:
         df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:,1]
 
@@ -114,8 +116,17 @@ def get_odds():
 # =================================
 def filter_value_bets(upcoming_df, model_df, odds_df, col):
     df = upcoming_df.copy()
+
+    # utwórz kolumnę target jeśli nie istnieje
+    if col not in df.columns:
+        df[col] = None
+
     df = pd.merge(df, model_df[['home','away',f'{col}_conf']], on=['home','away'], how='left')
     df = pd.merge(df, odds_df, on=['home','away'], how='left')
+
+    # Usuń wiersze bez kursów
+    df = df[df[col].notnull()]
+
     value_bets = df[(df[f"{col}_conf"] >= CONF_THRESHOLD) & (df[f"{col}_conf"] > 1/df[col])]
     return value_bets
 
