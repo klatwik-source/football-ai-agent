@@ -119,13 +119,19 @@ def filter_value_bets(upcoming_df, model_df, odds_df, col):
 
     # Dodaj confidence z modelu
     df = pd.merge(df, model_df[['home','away',f'{col}_conf']], on=['home','away'], how='left')
-    
+
     # Zabezpieczenie: jeśli kolumna kursów nie istnieje, dodaj z None
     if col not in odds_df.columns:
         odds_df[col] = None
-    
+
     # Dodaj kursy z bukmacherki
     df = pd.merge(df, odds_df[['home','away',col]], on=['home','away'], how='left')
+
+    # 🔹 DODAJEMY KOLUMNĘ JEŻELI NIE ISTNIEJE
+    if col not in df.columns:
+        df[col] = None
+    if f'{col}_conf' not in df.columns:
+        df[f'{col}_conf'] = None
 
     # Usuń wiersze bez kursu lub confidence
     df = df[df[f'{col}_conf'].notnull() & df[col].notnull()]
