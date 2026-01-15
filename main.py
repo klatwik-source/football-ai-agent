@@ -112,13 +112,18 @@ def get_odds():
     return pd.DataFrame(odds_list)
 
 # =================================
-# Filtr value bets
+# Filtr value bets z zabezpieczeniem
 # =================================
 def filter_value_bets(upcoming_df, model_df, odds_df, col):
     df = upcoming_df.copy()
 
     # Dodaj confidence z modelu
     df = pd.merge(df, model_df[['home','away',f'{col}_conf']], on=['home','away'], how='left')
+    
+    # Zabezpieczenie: jeśli kolumna kursów nie istnieje, dodaj z None
+    if col not in odds_df.columns:
+        odds_df[col] = None
+    
     # Dodaj kursy z bukmacherki
     df = pd.merge(df, odds_df[['home','away',col]], on=['home','away'], how='left')
 
