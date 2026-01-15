@@ -59,7 +59,11 @@ def run_agent():
 
     high_conf = df[df.confidence >= 0.65]
 
-    for _, row in high_conf.iterrows():
-        msg = (
-            f"⚽ **{row.home} vs {row.away}**\n"
-            f"🎯 Typ: OV
+   for _, row in high_conf.iterrows():
+    msg = (
+        f"⚽ **{row.home} vs {row.away}**\n"
+        f"🎯 Typ: OVER 2.5\n"
+        f"📊 Pewność: {round(row.confidence*100,2)}%\n"
+        f"🧠 AI Agent"
+    )
+    send_discord(msg)
