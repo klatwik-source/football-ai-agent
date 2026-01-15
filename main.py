@@ -14,15 +14,24 @@ if not DISCORD_WEBHOOK:
 
 HEADERS = {"X-Auth-Token": API_TOKEN}
 
-# === LIGI ===
-LEAGUES = ["PL", "PD", "SA", "BL1"]
+# === LIGI I PUCHARY ===
+COMPETITIONS = [
+    "PL",      # Premier League
+    "PD",      # LaLiga
+    "SA",      # Serie A
+    "BL1",     # Bundesliga
+    "CL",      # Liga Mistrzów
+    "EL",      # Liga Europy
+    "EC"       # Liga Konferencji
+]
+
 CONF_THRESHOLD = 0.65  # tylko pewne typy
 
 # Pobranie meczów
 def get_matches():
     all_matches = []
-    for league in LEAGUES:
-        url = f"https://api.football-data.org/v4/competitions/{league}/matches?status=FINISHED"
+    for comp in COMPETITIONS:
+        url = f"https://api.football-data.org/v4/competitions/{comp}/matches?status=FINISHED"
         r = requests.get(url, headers=HEADERS)
         data = r.json()
         if 'matches' in data:
@@ -38,7 +47,7 @@ def build_df(matches):
         if home_goals is None or away_goals is None:
             continue
         rows.append({
-            "league": m['competition']['name'],
+            "competition": m['competition']['name'],  # liga/puchar
             "home": m['homeTeam']['name'],
             "away": m['awayTeam']['name'],
             "home_goals": home_goals,
@@ -58,7 +67,7 @@ def build_df(matches):
     
     return df
 
-# Trening modelu z dodatkowymi cechami
+# Trening modelu z dodatkowymi cechami (train/test)
 def train_model(df, target_col):
     X = df[['home_goals', 'away_goals', 'home_form', 'away_form', 'goal_diff']]
     y = df[target_col]
@@ -86,23 +95,30 @@ def run_agent():
     matches = get_matches()
     df = build_df(matches)
 
-    for col in ["over25", "over35", "btts"]:
-        df = train_model(df, col)
-        high_conf = df[df[f"{col}_conf"] >= CONF_THRESHOLD]
-        for _, row in high_conf.iterrows():
-            type_name = col.upper()
-            msg = (
-                f"⚽ **{row.league}: {row.home} vs {row.away}**\n"
-                f"🎯 Typ: {type_name}\n"
-                f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
-                f"🧠 AI Agent"
-            )
-            send_discord(msg)
+    # Trenuj osobno dla każdej ligi/pucharu
+    for comp in df['competition'].unique():
+        comp_df = df[df['competition'] == comp].copy()
+        for col in ["over25", "over35", "btts"]:
+            comp_df = train_model(comp_df, col)
+            high_conf = comp_df[comp_df[f"{col}_conf"] >= CONF_THRESHOLD]
+            
+            for _, row in high_conf.iterrows():
+                type_name = col.upper()
+                msg = (
+                    f"⚽ **{row.competition}: {row.home} vs {row.away}**\n"
+                    f"🎯 Typ: {type_name}\n"
+                    f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
+                    f"🧠 AI Agent"
+                )
+                send_discord(msg)
     
-    # Raport skuteczności
+    # Raport dzienny – średnia pewność per liga/puchar
     report = ""
-    for col in ["over25","over35","btts"]:
-        report += f"{col.upper()} – średnia pewność: {df[f'{col}_conf'].mean():.2f}\n"
+    for comp in df['competition'].unique():
+        comp_df = df[df['competition'] == comp]
+        for col in ["over25","over35","btts"]:
+            mean_conf = comp_df[f"{col}_conf"].mean()
+            report += f"{comp} – {col.upper()} – średnia pewność: {mean_conf:.2f}\n"
     send_discord(f"📊 **Raport dzienny AI**\n{report}")
 
 if __name__ == "__main__":
