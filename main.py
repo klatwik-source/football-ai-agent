@@ -30,11 +30,13 @@ def get_matches():
         url = f"https://api.football-data.org/v4/competitions/{c}/matches?status=FINISHED,SCHEDULED"
         r = requests.get(url, headers=HEADERS).json()
         if "matches" in r:
-            all_matches.extend(r["matches"])
+            for m in r["matches"]:
+                m["competition_code"] = c
+                all_matches.append(m)
     return all_matches
 
 # =========================
-# DATAFRAME
+# DATA
 # =========================
 def build_df(matches):
     rows = []
@@ -44,7 +46,7 @@ def build_df(matches):
         ag = ft["away"] if ft else None
 
         rows.append({
-            "competition": m["competition"]["name"],
+            "competition": m["competition_code"],
             "home": m["homeTeam"]["name"],
             "away": m["awayTeam"]["name"],
             "home_goals": hg,
@@ -53,49 +55,58 @@ def build_df(matches):
             "over25": (hg + ag > 2.5) if hg is not None else None,
             "btts": (hg > 0 and ag > 0) if hg is not None else None,
             "home_win": (hg > ag) if hg is not None else None,
-            "draw": (hg == ag) if hg is not None else None,
-            "away_win": (hg < ag) if hg is not None else None
         })
 
     df = pd.DataFrame(rows)
-    finished = df[df.status == "FINISHED"].copy()
-
-    finished["goal_diff"] = finished.home_goals - finished.away_goals
-    finished["total_goals"] = finished.home_goals + finished.away_goals
-
-    return df, finished
+    return df
 
 # =========================
-# TRAINING
+# FEATURES (BEZ WYNIKU)
 # =========================
-def train(df, target):
-    df = df[df[target].notnull()].copy()
-    if len(df) < 10:
-        return None, None
+def add_features(df):
+    df["is_home"] = 1
+    return df
 
-    X = df[["goal_diff","total_goals"]]
-    y = df[target].astype(int)
+# =========================
+# TRAIN + PREDICT
+# =========================
+def train_and_predict(finished, upcoming, target):
+    finished = finished[finished[target].notnull()]
+    if len(finished) < 20:
+        return None
 
-    model = RandomForestClassifier(n_estimators=200, random_state=42)
-    model.fit(X, y)
+    X_train = finished[["is_home"]]
+    y_train = finished[target].astype(int)
 
-    df[target+"_conf"] = model.predict_proba(X)[:,1]
-    return df, model
+    model = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=4,
+        random_state=42
+    )
+    model.fit(X_train, y_train)
+
+    X_pred = upcoming[["is_home"]]
+    upcoming[target+"_conf"] = model.predict_proba(X_pred)[:,1]
+
+    return upcoming
 
 # =========================
 # AGENT
 # =========================
 def run_agent():
-    matches = get_matches()
-    df_all, finished = build_df(matches)
-    upcoming = df_all[df_all.status == "SCHEDULED"]
+    df = build_df(get_matches())
+    df = add_features(df)
+
+    finished = df[df.status == "FINISHED"]
+    upcoming = df[df.status == "SCHEDULED"]
 
     today = datetime.now().strftime("%Y-%m-%d")
     send(f"📊 **AI FOOTBALL AGENT – {today}**")
 
-    for comp in df_all.competition.unique():
+    for comp in df.competition.unique():
         f = finished[finished.competition == comp]
         u = upcoming[upcoming.competition == comp]
+
         if f.empty or u.empty:
             continue
 
@@ -104,17 +115,20 @@ def run_agent():
         for target, label in [
             ("over25","Over 2.5"),
             ("btts","BTTS"),
-            ("home_win","1X / X2 (Winner)")
+            ("home_win","Zwycięzca (1)")
         ]:
-            trained, model = train(f, target)
-            if model is None:
+            preds = train_and_predict(f, u, target)
+            if preds is None:
                 send(f"⚠️ Brak danych dla {label}")
                 continue
 
-            top = trained.sort_values(target+"_conf", ascending=False).head(3)
+            value = preds[preds[target+"_conf"] >= CONF_THRESHOLD]
+            if value.empty:
+                send(f"❌ Brak pewnych typów dla {label}")
+                continue
 
-            send(f"\n🎯 **{label} – TOP CONFIDENCE**")
-            for _, r in top.iterrows():
+            send(f"\n🎯 **{label}**")
+            for _, r in value.head(3).iterrows():
                 send(
                     f"⚽ {r.home} vs {r.away}\n"
                     f"🧠 Pewność AI: {round(r[target+'_conf']*100,1)}%"
