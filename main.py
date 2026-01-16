@@ -4,186 +4,121 @@ import os
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 
-# ===============================
-# Sekrety GitHub
-# ===============================
 API_TOKEN = os.getenv("API_TOKEN")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-if not API_TOKEN or not DISCORD_WEBHOOK or not ODDS_API_KEY:
-    raise Exception("Upewnij się, że API_TOKEN, DISCORD_WEBHOOK i ODDS_API_KEY są ustawione w GitHub Secrets")
+if not API_TOKEN or not DISCORD_WEBHOOK:
+    raise Exception("Brak API_TOKEN lub DISCORD_WEBHOOK")
 
 HEADERS = {"X-Auth-Token": API_TOKEN}
 
-# ===============================
-# Ligi i Puchary
-# ===============================
 COMPETITIONS = ["PL","PD","SA","BL1","CL","EL","EC"]
-CONF_THRESHOLD = 0.65
+CONF_THRESHOLD = 0.55
 
-# ===============================
-# Pobranie meczów
-# ===============================
+# =========================
+# DISCORD
+# =========================
+def send(msg):
+    requests.post(DISCORD_WEBHOOK, json={"content": msg})
+
+# =========================
+# MATCHES
+# =========================
 def get_matches():
     all_matches = []
-    for comp in COMPETITIONS:
-        url = f"https://api.football-data.org/v4/competitions/{comp}/matches?status=FINISHED,SCHEDULED"
-        r = requests.get(url, headers=HEADERS)
-        data = r.json()
-        if 'matches' in data:
-            all_matches.extend(data['matches'])
+    for c in COMPETITIONS:
+        url = f"https://api.football-data.org/v4/competitions/{c}/matches?status=FINISHED,SCHEDULED"
+        r = requests.get(url, headers=HEADERS).json()
+        if "matches" in r:
+            all_matches.extend(r["matches"])
     return all_matches
 
-# ===============================
-# Budowa DataFrame
-# ===============================
+# =========================
+# DATAFRAME
+# =========================
 def build_df(matches):
     rows = []
     for m in matches:
-        home_goals = m['score']['fullTime'].get('home') if m['score'].get('fullTime') else None
-        away_goals = m['score']['fullTime'].get('away') if m['score'].get('fullTime') else None
+        ft = m["score"]["fullTime"]
+        hg = ft["home"] if ft else None
+        ag = ft["away"] if ft else None
+
         rows.append({
-            "competition": m['competition']['name'],
-            "home": m['homeTeam']['name'],
-            "away": m['awayTeam']['name'],
-            "home_goals": home_goals,
-            "away_goals": away_goals,
-            "status": m['status'],
-            "btts": (home_goals > 0 and away_goals > 0) if home_goals is not None else None,
-            "over25": (home_goals + away_goals > 2.5) if home_goals is not None else None,
-            "over35": (home_goals + away_goals > 3.5) if home_goals is not None else None
+            "competition": m["competition"]["name"],
+            "home": m["homeTeam"]["name"],
+            "away": m["awayTeam"]["name"],
+            "home_goals": hg,
+            "away_goals": ag,
+            "status": m["status"],
+            "over25": (hg + ag > 2.5) if hg is not None else None,
+            "btts": (hg > 0 and ag > 0) if hg is not None else None,
+            "home_win": (hg > ag) if hg is not None else None,
+            "draw": (hg == ag) if hg is not None else None,
+            "away_win": (hg < ag) if hg is not None else None
         })
+
     df = pd.DataFrame(rows)
-    finished_df = df[df['status']=='FINISHED'].copy()
+    finished = df[df.status == "FINISHED"].copy()
 
-    # Dodaj formę i różnicę bramek tylko dla zakończonych meczów
-    finished_df['home_form'] = finished_df.groupby('home')['home_goals'].transform(lambda x: x.rolling(3,min_periods=1).mean())
-    finished_df['away_form'] = finished_df.groupby('away')['away_goals'].transform(lambda x: x.rolling(3,min_periods=1).mean())
-    finished_df['goal_diff'] = finished_df['home_goals'] - finished_df['away_goals']
+    finished["goal_diff"] = finished.home_goals - finished.away_goals
+    finished["total_goals"] = finished.home_goals + finished.away_goals
 
-    return df, finished_df
+    return df, finished
 
-# ===============================
-# Trening modelu
-# ===============================
-def train_model(df, target_col):
-    df = df[df[target_col].notnull()].copy()
-    if df.empty:
-        return df, None
+# =========================
+# TRAINING
+# =========================
+def train(df, target):
+    df = df[df[target].notnull()].copy()
+    if len(df) < 10:
+        return None, None
 
-    X = df[['home_goals','away_goals','home_form','away_form','goal_diff']].fillna(0)
-    y = df[target_col].astype(int)
-
-    split_index = int(len(df)*0.8)
-    X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
-    y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
+    X = df[["goal_diff","total_goals"]]
+    y = df[target].astype(int)
 
     model = RandomForestClassifier(n_estimators=200, random_state=42)
-    model.fit(X_train, y_train)
+    model.fit(X, y)
 
-    # Confidence dla test set
-    df[f"{target_col}_conf"] = 0.0
-    if len(X_test) > 0:
-        df.loc[X_test.index, f"{target_col}_conf"] = model.predict_proba(X_test)[:,1]
-
+    df[target+"_conf"] = model.predict_proba(X)[:,1]
     return df, model
 
-# ===============================
-# Pobranie kursów bukmacherskich
-# ===============================
-def get_odds():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?regions=eu&markets=h2h,totals&apiKey={ODDS_API_KEY}"
-    r = requests.get(url)
-    data = r.json()
-    odds_list = []
-    for match in data:
-        try:
-            home = match['home_team']
-            away = match['away_team']
-            totals = match['bookmakers'][0]['markets'][1]['outcomes']
-            over25 = next((o['price'] for o in totals if o['name']=='Over 2.5'), None)
-            btts = next((o['price'] for o in totals if o['name']=='BTTS'), None)
-            odds_list.append({"home": home,"away": away,"over25": over25,"btts": btts})
-        except:
-            continue
-    return pd.DataFrame(odds_list)
-
-# ===============================
-# Filtr value bets z zabezpieczeniem
-# ===============================
-def filter_value_bets(upcoming_df, model_df, odds_df, col):
-    df = upcoming_df.copy()
-
-    # Dodaj confidence z modelu
-    df = pd.merge(df, model_df[['home','away',f'{col}_conf']], on=['home','away'], how='left')
-
-    # Dodaj kursy z bukmacherki, jeśli brak kolumny dodaj None
-    if col not in odds_df.columns:
-        odds_df[col] = None
-    df = pd.merge(df, odds_df[['home','away',col]], on=['home','away'], how='left')
-
-    # Zapewnij kolumny
-    if col not in df.columns:
-        df[col] = None
-    if f"{col}_conf" not in df.columns:
-        df[f"{col}_conf"] = None
-
-    df = df[df[f"{col}_conf"].notnull() & df[col].notnull()]
-    value_bets = df[(df[f"{col}_conf"] >= CONF_THRESHOLD) & (df[f"{col}_conf"] > 1/df[col])]
-    return value_bets
-
-# ===============================
-# Wysyłka na Discord
-# ===============================
-def send_discord(msg):
-    requests.post(DISCORD_WEBHOOK, json={"content": msg})
-
-# ===============================
-# Funkcja główna
-# ===============================
+# =========================
+# AGENT
+# =========================
 def run_agent():
     matches = get_matches()
-    df_all, finished_df = build_df(matches)
-    odds_df = get_odds()
-    upcoming_df = df_all[df_all['status']=='SCHEDULED'].copy()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    df_all, finished = build_df(matches)
+    upcoming = df_all[df_all.status == "SCHEDULED"]
 
-    overall_report = f"📊 **Raport AI Agent - {today_str}**\n"
+    today = datetime.now().strftime("%Y-%m-%d")
+    send(f"📊 **AI FOOTBALL AGENT – {today}**")
 
-    for comp in df_all['competition'].unique():
-        comp_finished = finished_df[finished_df['competition']==comp].copy()
-        if len(comp_finished) < 5:
-            continue
-        comp_upcoming = upcoming_df[upcoming_df['competition']==comp].copy()
-        if comp_upcoming.empty:
+    for comp in df_all.competition.unique():
+        f = finished[finished.competition == comp]
+        u = upcoming[upcoming.competition == comp]
+        if f.empty or u.empty:
             continue
 
-        overall_report += f"\n🏆 **{comp}**\n"
-        for col in ["over25","btts"]:
-            comp_finished, model = train_model(comp_finished, col)
+        send(f"\n🏆 **{comp}**")
+
+        for target, label in [
+            ("over25","Over 2.5"),
+            ("btts","BTTS"),
+            ("home_win","1X / X2 (Winner)")
+        ]:
+            trained, model = train(f, target)
             if model is None:
-                overall_report += f"⚠️ Nie udało się wytrenować modelu dla {col}\n"
+                send(f"⚠️ Brak danych dla {label}")
                 continue
 
-            value_bets = filter_value_bets(comp_upcoming, comp_finished, odds_df, col)
+            top = trained.sort_values(target+"_conf", ascending=False).head(3)
 
-            if len(value_bets) == 0:
-                overall_report += f"❌ Brak pewnych typów dla {col}\n"
-            else:
-                for _, row in value_bets.iterrows():
-                    msg = (
-                        f"⚽ **{row.competition}: {row.home} vs {row.away} ({today_str})**\n"
-                        f"🎯 Typ: {col.upper()}\n"
-                        f"📊 Pewność AI: {round(row[f'{col}_conf']*100,2)}%\n"
-                        f"💰 Kurs: {row[col]}\n"
-                        f"🧠 AI Agent"
-                    )
-                    send_discord(msg)
-                overall_report += f"✅ Znaleziono {len(value_bets)} pewnych typów dla {col}\n"
-
-    # Wyślij podsumowanie dnia niezależnie od typów
-    send_discord(overall_report)
+            send(f"\n🎯 **{label} – TOP CONFIDENCE**")
+            for _, r in top.iterrows():
+                send(
+                    f"⚽ {r.home} vs {r.away}\n"
+                    f"🧠 Pewność AI: {round(r[target+'_conf']*100,1)}%"
+                )
 
 if __name__ == "__main__":
     run_agent()
