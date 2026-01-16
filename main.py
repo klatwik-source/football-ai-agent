@@ -91,21 +91,26 @@ def compute_features(df):
 # TRAIN + PREDICT
 # ----------------------
 def train_and_predict(finished_df, upcoming_df, target):
-    finished_df = compute_features(finished_df)
-    upcoming_df = compute_features(upcoming_df)
+    finished_df = add_team_features(finished_df)
+    upcoming_df = add_team_features(upcoming_df)
 
-    X_train = finished_df[["home_avg_goals","away_avg_goals","goal_diff","total_goals"]]
-    y_train = finished_df[target].astype(int)
-
-    if len(X_train) < 20:
+    finished_df = finished_df[finished_df[target].notnull()]
+    if len(finished_df) < 30:
         return None
 
-    model = RandomForestClassifier(n_estimators=300, random_state=42)
+    X_train = finished_df[["home_avg_goals", "away_avg_goals"]]
+    y_train = finished_df[target].astype(int)
+
+    model = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=6,
+        random_state=42
+    )
     model.fit(X_train, y_train)
 
-    X_pred = upcoming_df[["home_avg_goals","away_avg_goals","goal_diff","total_goals"]]
-    upcoming_df[target+"_conf"] = model.predict_proba(X_pred)[:,1]
-    
+    X_pred = upcoming_df[["home_avg_goals", "away_avg_goals"]]
+    upcoming_df[target + "_conf"] = model.predict_proba(X_pred)[:, 1]
+
     return upcoming_df
 
 # ----------------------
